@@ -161,6 +161,20 @@ function renderAdminDashboard() {
     <section class="admin-grid" aria-label="전체 학생 정보">
       ${STUDENTS.map(renderStudentCard).join("")}
     </section>
+
+    <!-- AI Student Counseling Strategy Assistant Section -->
+    <section id="aiCounselingSection" class="ai-counseling-panel" style="margin-top: 40px; padding: 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface);">
+      <div class="section-title">
+        <h3 style="font-size: 1.2rem; margin-bottom: 8px;">AI 학생 상담 전략 도우미</h3>
+        <p style="color: var(--text-secondary); margin-bottom: 16px;">상담할 학생을 위 카드에서 선택하고 고민을 입력해주세요.</p>
+      </div>
+      <div id="aiCounselingContent">
+        <p style="color: var(--text-secondary);">학생을 선택해주세요.</p>
+      </div>
+      <p style="margin-top: 24px; font-size: 0.85rem; color: var(--text-secondary);">
+        AI 상담 전략은 참고용입니다. 최종 판단과 실제 상담은 교사가 학생의 상황을 종합적으로 고려하여 진행해야 합니다.
+      </p>
+    </section>
   `;
 
   showOnly(adminView);
@@ -176,6 +190,7 @@ function renderStudentCard(student) {
         <p class="student-number">학번 ${student.id}</p>
         ${renderGrades(student.grades, true, `gradesTitle-${student.id}`)}
         ${renderTraits(student)}
+        <button class="primary-button" style="margin-top: 16px; width: 100%;" onclick="selectStudentForCounseling('${student.id}')" type="button">상담 전략 요청</button>
       </div>
     </article>
   `;
@@ -213,3 +228,95 @@ function renderTraits(student) {
 }
 
 showOnly(loginView);
+
+window.selectStudentForCounseling = function(studentId) {
+  const student = STUDENTS.find(s => s.id === studentId);
+  if (!student) return;
+
+  const aliases = {"10101": "학생 A", "10102": "학생 B", "10103": "학생 C"};
+  const studentAlias = aliases[student.id] || "학생";
+
+  const gradeSummary = Object.entries(student.grades).map(([k, v]) => `${k}: ${v}`).join(", ");
+  const learningTraits = student.traits.join(" ") + " " + student.teacherMemo;
+
+  const aiContent = document.getElementById("aiCounselingContent");
+  aiContent.innerHTML = `
+    <div style="margin-bottom: 16px; padding: 16px; background: var(--surface-hover); border-radius: 8px;">
+      <h4 style="margin-bottom: 8px;">선택된 학생 정보</h4>
+      <p style="margin-bottom: 4px;"><strong>화면 표시용 (전송 안 됨):</strong> ${student.name} (${student.id})</p>
+      <p><strong>Gemini 전송용 (익명화):</strong> ${studentAlias}</p>
+    </div>
+    <div style="margin-bottom: 16px;">
+      <label for="teacherConcern" style="display: block; margin-bottom: 8px; font-weight: 500;">교사 고민 입력</label>
+      <textarea id="teacherConcern" rows="4" style="width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 8px; resize: vertical;" placeholder="수업 참여는 좋은데 평가 결과가 낮습니다. 어떻게 상담하면 좋을까요?"></textarea>
+    </div>
+    <div style="margin-bottom: 16px;">
+      <label style="display: block; margin-bottom: 8px; font-weight: 500;">전송 데이터 미리보기 (이름/학번/사진 제외)</label>
+      <pre id="dataPreview" style="background: var(--surface-hover); padding: 12px; border-radius: 8px; font-size: 0.9rem; overflow-x: auto; white-space: pre-wrap;">
+{
+  "studentAlias": "${studentAlias}",
+  "gradeSummary": "${gradeSummary}",
+  "learningTraits": "${learningTraits}",
+  "teacherConcern": ""
+}
+      </pre>
+    </div>
+    <button id="getAiStrategyBtn" class="primary-button" style="margin-bottom: 16px;" type="button">AI 상담 전략 받기</button>
+    <div id="aiResultArea" style="padding: 16px; border: 1px solid var(--border); border-radius: 8px; display: none; background: var(--surface);"></div>
+  `;
+
+  const textarea = document.getElementById("teacherConcern");
+  const preview = document.getElementById("dataPreview");
+  
+  textarea.addEventListener("input", (e) => {
+    preview.textContent = JSON.stringify({
+      studentAlias,
+      gradeSummary,
+      learningTraits,
+      teacherConcern: e.target.value
+    }, null, 2);
+  });
+
+  document.getElementById("getAiStrategyBtn").addEventListener("click", async () => {
+    const concern = textarea.value.trim();
+    const resultArea = document.getElementById("aiResultArea");
+    
+    if (!concern) {
+      alert("상담 고민을 먼저 입력해주세요.");
+      return;
+    }
+
+    resultArea.style.display = "block";
+    resultArea.innerHTML = "<p>AI가 상담 전략을 생성하는 중입니다...</p>";
+
+    try {
+      const response = await fetch('/api/gemini-counseling', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentAlias,
+          gradeSummary,
+          learningTraits,
+          teacherConcern: concern
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        resultArea.innerHTML = `<div style="white-space: pre-wrap; line-height: 1.6;">${data.result}</div>`;
+      } else {
+        resultArea.innerHTML = `<p style="color: red;">AI 상담 전략을 불러오지 못했습니다. API 키 또는 Vercel 환경 변수를 확인해주세요. (${data.error || 'Unknown error'})</p>`;
+      }
+    } catch (err) {
+      resultArea.innerHTML = `<p style="color: red;">AI 상담 전략을 불러오지 못했습니다. API 키 또는 Vercel 환경 변수를 확인해주세요. (${err.message})</p>`;
+    }
+  });
+};
+
+// --- 보안 점검용 주석 ---
+// 1. 프론트엔드에 API 키를 넣으면 개발자 도구에서 노출될 수 있다.
+// 2. Gemini API 호출은 Vercel Serverless Function에서 처리한다.
+// 3. .env 파일은 GitHub에 올리지 않는다.
+// 4. Vercel 배포 시에는 Project Settings의 Environment Variables에 GEMINI_API_KEY를 등록해야 한다.
+// 5. Gemini로 전송하는 데이터는 이름, 학번, 사진 경로를 제외한 최소 정보로 제한한다.
